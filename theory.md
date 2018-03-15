@@ -170,7 +170,7 @@ This message shows that your installation appears to be working correctly.
 ...
 ```
 
-С помощью команды `docker run` мы запустили на выполнение контейнер hello-world, единственным предназначением которого было выведение на экран приветственного текста. По завершению работы процесса контейнер автоматически прекратил свою работу.
+С помощью команды `docker run` мы запустили на выполнение контейнер hello-world, единственным предназначением которого было выведение на экран текста приветствия. По завершению работы процесса контейнер автоматически прекратил свою работу.
 
 Попробуем кое-что более интересное. Для этого скачаем из официального реестра Docker Hub образ [BusyBox](https://ru.wikipedia.org/wiki/BusyBox) - набора утилит для командной строки Linux.
 
@@ -228,7 +228,7 @@ ecfe781b05ec
 
 Так же можно удалить все контейнеры, воспользовавшись командой `docker rm $(docker ps -a -q -f status=exited)`
 
-Удаление ненужных контейнеров выполняется с помощью команды `rmi`:
+Удаление ненужных образов выполняется с помощью команды `rmi`:
 
 ```bash
 $ docker rmi busybox
@@ -238,51 +238,88 @@ Deleted: sha256:f6e427c148a766d2d6c117d67359a0aa7d133b5bc05830a7ff6e8b64ff6b1d1d
 Deleted: sha256:c5183829c43c4698634093dc38f9bee26d1b931dedeba71dbee984f42fe1270d
 ```
 
+### Создание контейнера
 
-##########################################################
+Для создание контейнера зарегистрируйтесь на [Docker Hub](https://hub.docker.com/). После этого скачайте репозиторий с [тестовым приложением](https://github.com/antonkravtsevich/kubernetes_labs) и перейдите в директорию `flask_base_app`.
 
+Основной файл для создания репозитория называется Dockerfile. Его содержимое выглядит следующим образом:
 
-## Tectonic sandbox:
+```Dockerfile
+FROM python:3-onbuild
 
-качаем тута: https://coreos.com/tectonic/sandbox/
+# Порт, который необходимо открыть для внешнего доступа
+EXPOSE 5000
 
-распаковываем, переходим в директорию, вбиваемRCC Institute of Technolog
+# Запускаем приложение на выполнение
+CMD ["python", "./app.py"]
+```
 
-vagrant up --provider=virtualbox
+Секция `FROM` указывает на родительский контейнер. В данном случае это контейнер, содержащий оптимизированный для запуска python-приложений в продакшне. Секция `EXPOSE` устанавливает порт, открытый для внешнего взаимодействия. Секция `CMD` указывает, какие команды необходимо запустить при старте контейнера.
 
-ждем 15-20 минут, пока качаются инсталляционные файлы CoreOS
-потом пойдет установка Tectonic, еще минут 20
+Помимо приложения и файла для сборки контейнера, в папке находится файл `requirements.txt`, который содержит список python-библиотек, необходимых для запуска приложения.
 
-Когда установка завершится, мы можем открыть доступ к консоли
-для этого необходимо перейти по адресу https://console.tectonicsandbox.com/ (т.к. это локальное соединение, то выдаст ошибку "подключение не защищено". Все окей, так и надо.
+> Название контейнера `antonkravtsevich/base_flask_app` состоит из ID пользователя на Dockerhub (antonkravtsevich) и названия самого контейнера (base_flask_app). Замените ID пользователя своим, чтобы иметь возможность загрузить контейнер на Dockerhub.
 
-Имя пользователя в консоли: admin@example.com
-пароль: sandbox
+Соберем контейнер:
 
-Для генерации файла настроек kubectl:
-From Tectonic Console, click Tectonic Admin > My Account on the bottom left of the page.
-Click KUBECTL: Download Configuration, and follow the onscreen instructions to authenticate.
-When the Set Up kubectl window opens, click Verify Identity.
-Enter username: admin@example.com and password: sandbox, and click Login.
-Copy the alphanumeric string on the Login Successful screen.
-Switch back to Tectonic Console, enter the string in the field provided, and click Generate Configuration to open the Download kubectl Configuration window.
+```bash
+$ docker build -t antonkravtsevich/base_flask_app .
+Sending build context to Docker daemon 4.096 kB
+Step 1/3 : FROM python:3-onbuild
+# Executing 3 build triggers...
+Step 1/1 : COPY requirements.txt /usr/src/app/
+Step 1/1 : RUN pip install --no-cache-dir -r requirements.txt
+ ---> Running in 75ec8b4fa72a
+Collecting Flask==0.12.2 (from -r requirements.txt (line 1))
+  Downloading Flask-0.12.2-py2.py3-none-any.whl (83kB)
+Collecting itsdangerous>=0.21 (from Flask==0.12.2->-r requirements.txt (line 1))
+  Downloading itsdangerous-0.24.tar.gz (46kB)
+Collecting Jinja2>=2.4 (from Flask==0.12.2->-r requirements.txt (line 1))
+  Downloading Jinja2-2.10-py2.py3-none-any.whl (126kB)
+Collecting click>=2.0 (from Flask==0.12.2->-r requirements.txt (line 1))
+  Downloading click-6.7-py2.py3-none-any.whl (71kB)
+Collecting Werkzeug>=0.7 (from Flask==0.12.2->-r requirements.txt (line 1))
+  Downloading Werkzeug-0.14.1-py2.py3-none-any.whl (322kB)
+Collecting MarkupSafe>=0.23 (from Jinja2>=2.4->Flask==0.12.2->-r requirements.txt (line 1))
+  Downloading MarkupSafe-1.0.tar.gz
+Installing collected packages: itsdangerous, MarkupSafe, Jinja2, click, Werkzeug, Flask
+  Running setup.py install for itsdangerous: started
+    Running setup.py install for itsdangerous: finished with status 'done'
+  Running setup.py install for MarkupSafe: started
+    Running setup.py install for MarkupSafe: finished with status 'done'
+Successfully installed Flask-0.12.2 Jinja2-2.10 MarkupSafe-1.0 Werkzeug-0.14.1 click-6.7 itsdangerous-0.24
+Step 1/1 : COPY . /usr/src/app
+ ---> 60f8cda970ae
+Removing intermediate container ac905ca52934
+Removing intermediate container 75ec8b4fa72a
+Removing intermediate container 82032170dca7
+Step 2/3 : EXPOSE 5000
+ ---> Running in 6a3a1ea19281
+ ---> 7595e4f26987
+Removing intermediate container 6a3a1ea19281
+Step 3/3 : CMD python ./app.py
+ ---> Running in 66680a2bbaa9
+ ---> 147dcd57f85c
+Removing intermediate container 66680a2bbaa9
+Successfully built 147dcd57f85c
 
-Скопируйте загруженный файл kubectl-config в папку ~/.kube, изменив его имя на config
-cp ~/Загрузки/kubectl-config ~/.kube/config
+$ docker images
+REPOSITORY                        TAG                 IMAGE ID            CREATED             SIZE
+antonkravtsevich/base_flask_app   latest              147dcd57f85c        59 seconds ago      697 MB
+<none>                            <none>              becb73ed6142        2 minutes ago       688 MB
+python                            3-onbuild           badd7f8f9d5a        25 hours ago        688 MB
+hello-world                       latest              f2a91732366c        3 months ago        1.85 kB
+```
 
-Проверьте корректность kubectl, получив список нодов:
-$ kubectl get nodes
-NAME                     STATUS    ROLES     AGE       VERSION
-c1.tectonicsandbox.com   Ready     master    25m       v1.7.5+coreos.1
-w1.tectonicsandbox.com   Ready     node      25m       v1.7.5+coreos.1
+Образ `antonkravtsevich/base_flask_app` появился в списке доступных. Запустим этот контейнер:
 
-Остановка кластера tectonic:
-из папки tectonic-sandbox выполнить
-$ vagrant halt
-==> c1: Attempting graceful shutdown of VM...
-==> w1: Attempting graceful shutdown of VM...
+```bash
+$ docker run -p 8888:5000 antonkravtsevich/base_flask_app
+      * Running on http://0.0.0.0:5000/ (Press CTRL+C to quit)
+```
 
-продолжение тут: https://coreos.com/tectonic/docs/latest/tutorials/sandbox/first-app.html
+Флаг -p позволяет указывать проброс портов (в данном случае - с 8888 на 5000). С помощью этой команды можно открыть порты контейнера для доступа извне. Перейдите в браузере по адресу http://127.0.0.1:8888. Если контейнер был запущен успешно, вы получите страницу с текстом `Hello from container!`.
 
-вот тут короче та же херня, но для реальных машин и кластера на 10 нод
+Это все, что необходимо знать для запуска тестового кластера kubernetes.
 
+## Kubernetes
