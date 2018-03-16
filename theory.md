@@ -628,6 +628,216 @@ $ minikube ip
 192.168.99.100
 ```
 
-И перейдем в браузере по адресу `192.168.99.100:32418` (порт может отличаться). 
+И перейдем в браузере по адресу `192.168.99.100:32418` (порт может отличаться)
 
 Если развертывание всех компонентов прошло правильно, вы получите страницу с сообщением `Hello from container!`.
+
+### Запуск составного приложения в kubernetes-кластере
+
+Для этого примера будет использовано стандартное приложение, состоящее из фронт-энда и базы данных. Воспользуемся готовым приложением из [данного](https://github.com/cloudyuga/rsvpapp) репозитория. Данное приложение позволяет подписаться на рассылку, добавив свой e-mail в список. Все необходимые образы контейнеров уже находятся в Docker Hub, все что нам нужно - развернуть их в кластере.
+
+Для начала запустим базу данных.
+
+База данных создается с помощью Deployment, описанного следующим `.yaml` файлом:
+
+**rsvp-db.yaml**
+
+```yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: rsvp-db
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        appdb: rsvpdb
+    spec:
+      containers:
+      - name: rsvpd-db
+        image: mongo:3.3
+        env:
+          # Переменная окружения, хранящая название базы данных
+        - name: MONGODB_DATABASE
+          value: rsvpdata
+        ports:
+        - containerPort: 27017
+```
+
+Создадим под:
+
+```bash
+$ kubectl create -f rsvp-db.yaml
+deployment "rsvp-db" created
+```
+
+Создадим сервис для того, чтобы открыть доступ к базе данных:
+
+**rsvp-db-service.yaml**
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb
+  labels:
+    app: rsvpdb
+spec:
+  ports:
+  - port: 27017
+    protocol: TCP
+  selector:
+    appdb: rsvpdb
+```
+
+```bash
+$ kubectl create -f rsvp-db-service.yaml
+service "mongodb" created
+```
+
+Теперь сервис запущен. Получим информацию о deployment-ах, подах и сервисах:
+
+```bash
+$ kubectl get deployments
+NAME      DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
+bfa       3         3         3            3           2h
+rsvp-db   1         1         1            1           6m
+
+$ kubectl get pods
+NAME                      READY     STATUS    RESTARTS   AGE
+bfa-7f76f8b449-bg7zq      1/1       Running   0          2h
+bfa-7f76f8b449-d7zcx      1/1       Running   0          2h
+bfa-7f76f8b449-hrqtr      1/1       Running   0          2h
+rsvp-db-759bcb695-fx2zz   1/1       Running   0          4m
+
+$ kubectl get services
+NAME          TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)          AGE
+bfa-service   NodePort    10.96.94.20    <none>        5000:32418/TCP   1h
+kubernetes    ClusterIP   10.96.0.1      <none>        443/TCP          9d
+mongodb       ClusterIP   10.110.234.0   <none>        27017/TCP        1m
+```
+
+Создадим и запустим deployment приложения, отвечающего за фронт-энд:
+
+**rsvp-web.yaml**
+
+```yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: rsvp
+spec: 
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: rsvp
+    spec:
+      containers:
+      - name: rsvp-app
+        image: teamcloudyuga/rsvpapp
+        env:
+        # создание переменной окружения, которое будет хранить ip-адрес базы данных
+        - name: MONGODB_HOST
+          # в качестве значения передается название сервиса
+          value: mongodb
+        ports:
+        - containerPort: 5000
+          # имя порта
+          name: web-port
+```
+
+> Тип порта `containerPort` позволяет использовать имя порта вместо жесткого нумерованного значения. 
+
+В приложении, отвечающем за фронт, для подключения к базе данных используется следующий код:
+
+```python
+MONGODB_HOST=os.environ.get('MONGODB_HOST', 'localhost')
+client = MongoCLient(MONGODB_HOST, 27017)
+```
+
+Этот код получает IP-адрес базы данных из переменной окружения.
+
+Создадим deployment:
+
+```bash
+$ kubectl create -f rsvp-web.yaml
+deployment "rsvp" created
+
+$ kubectl get deployments
+NAME      DESIRED   CURRENT   UP-TO-DATE   AVAILABLE   AGE
+bfa       3         3         3            3           2h
+rsvp      1         1         1            1           18s
+rsvp-db   1         1         1            1           11m
+```
+
+Создадим сервис для фронтэнда:
+
+**rsvp-web-service.yaml**
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: rsvp
+  labels:
+    apps: rsvp
+spec:
+  type: NodePort
+  ports:
+  - port: 80
+    targetPort: web-port
+    protocol: TCP
+  selector:
+    app: rsvp
+```
+
+> В секции `targetPort` указано имя порта, которое мы дали рабочему порту нашего приложения. Подобная привязка позволит менять выходной порт приложения без необходимости создавать новый сервис.
+
+```bash
+$ kubectl create -f rsvp-web-service.yaml 
+service "rsvp" created
+
+$ kubectl get services
+NAME          TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)          AGE
+bfa-service   NodePort    10.96.94.20     <none>        5000:32418/TCP   1h
+kubernetes    ClusterIP   10.96.0.1       <none>        443/TCP          9d
+mongodb       ClusterIP   10.110.234.0    <none>        27017/TCP        12m
+rsvp          NodePort    10.107.161.11   <none>        80:32238/TCP     18s
+```
+
+Minikube транслирует все данные, полученные на порт 32238, на восьмидесятый порт сервиса rsvp. Попробуем получить к нему доступ:
+
+```bash
+$ minikube ip
+192.168.99.100
+```
+
+Перейдем в браузере по адресу 192.168.99.100:32238. Откроется главная страница приложения, на которой можно добавлять новые e-mail'ы.
+
+При увеличении нагрузки можно увеличить количество запущенных подов, используя команду `scale`:
+
+```bash
+$ kubectl get pods
+NAME                      READY     STATUS    RESTARTS   AGE
+bfa-7f76f8b449-bg7zq      1/1       Running   0          2h
+bfa-7f76f8b449-d7zcx      1/1       Running   0          2h
+bfa-7f76f8b449-hrqtr      1/1       Running   0          2h
+rsvp-876876b6c-d6wgz      1/1       Running   0          11m
+rsvp-db-759bcb695-fx2zz   1/1       Running   0          22m
+
+$ kubectl scale --replicas=4 -f rsvp-web.yaml 
+deployment "rsvp" scaled
+
+$ kubectl get pods
+NAME                      READY     STATUS    RESTARTS   AGE
+bfa-7f76f8b449-bg7zq      1/1       Running   0          2h
+bfa-7f76f8b449-d7zcx      1/1       Running   0          2h
+bfa-7f76f8b449-hrqtr      1/1       Running   0          2h
+rsvp-876876b6c-5pjm9      1/1       Running   0          49s
+rsvp-876876b6c-9czqc      1/1       Running   0          49s
+rsvp-876876b6c-d6wgz      1/1       Running   0          13m
+rsvp-876876b6c-rrgc8      1/1       Running   0          49s
+rsvp-db-759bcb695-fx2zz   1/1       Running   0          24m
+```
