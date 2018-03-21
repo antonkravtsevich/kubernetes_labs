@@ -843,3 +843,240 @@ rsvp-876876b6c-d6wgz      1/1       Running   0          13m
 rsvp-876876b6c-rrgc8      1/1       Running   0          49s
 rsvp-db-759bcb695-fx2zz   1/1       Running   0          24m
 ```
+
+## Создание кластера из физических машин с помощью kubeadm и flannel
+
+Начальные требования для создания кластера:
+
+1. Физические (виртуальные) машины, объединенные в одну сеть и имеющие доступ в интернет.
+
+2. На этих машинах установлена Linux-система (в данном примере - Ubuntu 16.04)
+
+3. Доступ по SSH к этим машинам с управляющей машины (машины, на которой ведется разработка)
+
+### Настройка мастер-нода
+
+Скопируем IP-адрес машины, которой отведена роль мастера. Добавим этот IP в переменную окружения (замените значение IP на своё):
+
+```bash
+export MASTER_IP=188.166.115.138
+```
+
+Обновим систему:
+
+```bash
+apt-get update && apt-get upgrade -y
+```
+
+Добавим репозитории для установки docker и kubernetes пакетов:
+
+```bash
+curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
+
+cat <<EOF > /etc/apt/sources.list.d/kubernetes.list
+deb http://apt.kubernetes.io/ kubernetes-xenial main
+EOF
+
+apt-get update -y
+```
+
+Установим Docker:
+
+```bash
+apt-get install -y docker.io
+```
+
+Проверить установку можно с помощью команды
+
+```bash
+$ docker version
+Client:
+ Version:	17.12.1-ce
+ API version:	1.35
+ Go version:	go1.9.4
+ Git commit:	7390fc6
+ Built:	Tue Feb 27 22:17:40 2018
+ OS/Arch:	linux/amd64
+
+Server:
+ Engine:
+  Version:	17.12.1-ce
+  API version:	1.35 (minimum version 1.12)
+  Go version:	go1.9.4
+  Git commit:	7390fc6
+  Built:	Tue Feb 27 22:16:13 2018
+  OS/Arch:	linux/amd64
+  Experimental:	false
+```
+
+Установим основные kubernetes-пакеты, которые позволят нам развернуть кластер:
+
+```bash
+apt-get install -y kubelet kubeadm kubectl kubernetes-cni
+```
+
+Для создания кластера мы будем использовать утилиту kubeadm, позволяющую создавать простой, безопасный kubernetes-кластер. В данный момент эта утилита находится в стадии альфа-версии и не рекомендуется разработчиками для использования в боевом окружении, однако многие разработчики утверждают, что она достаточно стабильна для продакшна.
+
+Запустим создание мастер-ноды:
+
+```bash
+$ kubeadm init --pod-network-cidr=10.244.0.0/16 --apiserver-advertise-address $MASTER_IP
+[init] Using Kubernetes version: v1.8.0
+[init] Using Authorization modes: [Node RBAC]
+[preflight] Running pre-flight checks
+[kubeadm] WARNING: starting in 1.8, tokens expire after 24 hours by default (if you require a non-expiring token use --token-ttl 0)
+[certificates] Generated ca certificate and key.
+[certificates] Generated apiserver certificate and key.
+[certificates] apiserver serving cert is signed for DNS names [kubeadm-master kubernetes kubernetes.default kubernetes.default.svc kubernetes.default.svc.cluster.local] and IPs [10.96.0.1 10.138.0.4]
+[certificates] Generated apiserver-kubelet-client certificate and key.
+[certificates] Generated sa key and public key.
+[certificates] Generated front-proxy-ca certificate and key.
+[certificates] Generated front-proxy-client certificate and key.
+[certificates] Valid certificates and keys now exist in "/etc/kubernetes/pki"
+[kubeconfig] Wrote KubeConfig file to disk: "admin.conf"
+[kubeconfig] Wrote KubeConfig file to disk: "kubelet.conf"
+[kubeconfig] Wrote KubeConfig file to disk: "controller-manager.conf"
+[kubeconfig] Wrote KubeConfig file to disk: "scheduler.conf"
+[controlplane] Wrote Static Pod manifest for component kube-apiserver to "/etc/kubernetes/manifests/kube-apiserver.yaml"
+[controlplane] Wrote Static Pod manifest for component kube-controller-manager to "/etc/kubernetes/manifests/kube-controller-manager.yaml"
+[controlplane] Wrote Static Pod manifest for component kube-scheduler to "/etc/kubernetes/manifests/kube-scheduler.yaml"
+[etcd] Wrote Static Pod manifest for a local etcd instance to "/etc/kubernetes/manifests/etcd.yaml"
+[init] Waiting for the kubelet to boot up the control plane as Static Pods from directory "/etc/kubernetes/manifests"
+[init] This often takes around a minute; or longer if the control plane images have to be pulled.
+[apiclient] All control plane components are healthy after 39.511972 seconds
+[uploadconfig] Storing the configuration used in ConfigMap "kubeadm-config" in the "kube-system" Namespace
+[markmaster] Will mark node master as master by adding a label and a taint
+[markmaster] Master master tainted and labelled with key/value: node-role.kubernetes.io/master=""
+[bootstraptoken] Using token: <token>
+[bootstraptoken] Configured RBAC rules to allow Node Bootstrap tokens to post CSRs in order for nodes to get long term certificate credentials
+[bootstraptoken] Configured RBAC rules to allow the csrapprover controller automatically approve CSRs from a Node Bootstrap Token
+[bootstraptoken] Creating the "cluster-info" ConfigMap in the "kube-public" namespace
+[addons] Applied essential addon: kube-dns
+[addons] Applied essential addon: kube-proxy
+
+Your Kubernetes master has initialized successfully!
+
+To start using your cluster, you need to run (as a regular user):
+
+  mkdir -p $HOME/.kube
+  sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+  sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+You should now deploy a pod network to the cluster.
+Run "kubectl apply -f [podnetwork].yaml" with one of the options listed at:
+  http://kubernetes.io/docs/admin/addons/
+
+You can now join any number of machines by running the following on each node
+as root:
+
+  kubeadm join --token <token> <master-ip>:<master-port> --discovery-token-ca-cert-hash sha256:<hash>
+```
+
+**Скопируйте строку** в самом конце вывода команды kubeadm init. Позже она позволит присоединять новые рабочие ноды к данной мастер-ноде.
+
+> Ключ --pod-network-cidr с указанным IP-адресом является обязательным для использования оверлейной сети, установка которой описана ниже.
+
+Сконфигурируем kubectl для работы с текущей мастер-нодой:
+
+```bash
+mkdir -p $HOME/.kube
+cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+chown $(id -u):$(id -g) $HOME/.kube/config
+```
+
+Проверим корректность создания мастер-ноды и настройки kubectl:
+
+```bash
+$ kubectl get nodes
+NAME       STATUS    ROLES     AGE       VERSION
+master-1   NotReady  master    12h       v1.9.5
+```
+
+В данный момент в статусе значится "NotReady". Это связано с тем, что узел не может подключиться к еще не настроенной оверлейной сети.
+
+В качестве оверлейной сети мы будем использовать flannel, наиболее популярный проект для создания сети третьего уровня для работы с контейнерами. Flannel разрабатывалась и поддерживалась CoreOS.
+
+Развернем виртуальную сеть:
+
+```bash
+sysctl net.bridge.bridge-nf-call-iptables=1
+kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/v0.9.1/Documentation/kube-flannel.yml
+```
+
+Добавим dashboard для удаленной работы с GUI kubernetes:
+
+```bash
+kubectl create -f https://rawgit.com/kubernetes/dashboard/master/src/deploy/recommended/kubernetes-dashboard.yaml --namespace=kube-system
+```
+
+Проверим работу кластера:
+
+```bash
+$ kubectl get nodes
+NAME       STATUS    ROLES     AGE       VERSION
+master-1   Ready     master    12h       v1.9.5
+```
+
+Для удаленного доступа к kubectl-консоли на машины, в которой ведется разработка, необходимо скопировать файл конфигурации мастер-машины (замените ip мастер-машины своим):
+
+```bash
+scp root@188.166.115.138:/etc/kubernetes/admin.conf ~/.kube/config
+```
+
+Для проверки работы локального kubectl с удаленным кластером запустите любую команду (к примеру, kubectl get nodes)
+
+### Настройка рабочего нода
+
+Настройка рабочего нода практически ничем не отличается от настройки мастер-нода.
+
+Обновим систему:
+
+```bash
+apt-get update && apt-get upgrade -y
+```
+
+Добавим репозитории для установки docker и kubernetes пакетов:
+
+```bash
+curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
+
+cat <<EOF > /etc/apt/sources.list.d/kubernetes.list
+deb http://apt.kubernetes.io/ kubernetes-xenial main
+EOF
+
+apt-get update -y
+```
+
+Установим Docker:
+
+```bash
+apt-get install -y docker.io
+```
+
+Установим основные kubernetes-пакеты:
+
+```bash
+apt-get install -y kubelet kubeadm kubectl kubernetes-cni
+```
+
+Подключим нод к мастер-ноду для создания кластера, запустив команду, скопированную при развертывании мастер-ноды:
+
+```bash
+kubeadm join --token <token> <master-ip>:<master-port> --discovery-token-ca-cert-hash sha256:<hash>
+```
+
+Запустим на локальной машине проверку кластера:
+
+```bash
+watch kubectl get nodes
+```
+
+Через несколько десятков секунд вывод примет следующий вид:
+
+```bash
+NAME       STATUS    ROLES     AGE       VERSION
+master-1   Ready     master    12h       v1.9.5
+node-1     Ready     <none>    10h       v1.9.5
+```
+
+Кластер создан!
